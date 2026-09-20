@@ -9,22 +9,21 @@ import time
 import torch
 
 
-
-
 # ============================================================
-# PAGE CONFIGURATION 
-# ============================================================     
+# PAGE CONFIGURATION
+# ============================================================
 
 st.set_page_config(
     page_title="Pothole Detection & Tracking",
+    page_icon="🚧",
     layout="wide"
 )
 
-st.title("🚧 Real-Time Video Pothole Detection & Tracking")
+st.title("🚧 Pothole Detection & Tracking")
 
 
 # ============================================================
-# AUTOMATIC DEVICE DETECTION
+# DEVICE DETECTION
 # ============================================================
 
 if torch.cuda.is_available():
@@ -39,7 +38,7 @@ else:
 # SIDEBAR SETTINGS
 # ============================================================
 
-st.sidebar.header("⚙️ Model Controls & Settings")
+st.sidebar.header("⚙️ Model Controls")
 
 confidence_threshold = st.sidebar.slider(
     "Detection Confidence Threshold",
@@ -60,12 +59,12 @@ iou_threshold = st.sidebar.slider(
 enable_tta = st.sidebar.checkbox(
     "Enable TTA for Images",
     value=False,
-    help="Improves image accuracy but is slower. Not recommended for video."
+    help="Improves image accuracy but is slower."
 )
 
 
 # ============================================================
-# VIDEO PERFORMANCE SETTINGS
+# VIDEO SETTINGS
 # ============================================================
 
 st.sidebar.header("🚀 Video Performance")
@@ -74,26 +73,19 @@ frame_skip = st.sidebar.selectbox(
     "Process Every Nth Frame",
     options=[1, 2, 3, 4],
     index=1,
-    help=(
-        "1 = every frame, "
-        "2 = every second frame, "
-        "3 = every third frame, "
-        "4 = every fourth frame."
-    )
+    help="1 = every frame, 2 = every second frame, etc."
 )
 
 video_imgsz = st.sidebar.selectbox(
     "Video Inference Size",
     options=[320, 416, 512, 640],
-    index=2,
-    help="Smaller values are faster. 416 or 512 is recommended for CPU."
+    index=2
 )
 
 max_video_width = st.sidebar.selectbox(
     "Maximum Video Width",
     options=[640, 800, 960, 1280],
-    index=2,
-    help="Large videos are resized before YOLO inference."
+    index=2
 )
 
 
@@ -117,38 +109,47 @@ else:
 
 
 # ============================================================
-# LOAD MODEL
+# LOAD CUSTOM POTHOLE MODEL
 # ============================================================
 
 @st.cache_resource
 def load_pothole_model():
 
-    # Custom model in current directory
-    if os.path.exists("best.pt"):
-        return YOLO("best.pt")
+    # --------------------------------------------------------
+    # OPTION 1:
+    # best.pt in same directory as app.py
+    # --------------------------------------------------------
 
-    # Search recursively
+    if os.path.exists("best.pt"):
+        model_path = "best.pt"
+
+        return YOLO(model_path)
+
+
+    # --------------------------------------------------------
+    # OPTION 2:
+    # Search inside runs folders
+    # --------------------------------------------------------
+
     found_weights = glob.glob(
         "runs/**/best.pt",
         recursive=True
     )
 
     if found_weights:
-        return YOLO(found_weights[0])
 
-    # Fallback model
-    if os.path.exists("yolov8n.pt"):
+        model_path = found_weights[0]
 
-        st.sidebar.warning(
-            "⚠️ Using base YOLOv8 model. "
-            "For better pothole detection, use custom trained weights."
-        )
+        return YOLO(model_path)
 
-        return YOLO("yolov8n.pt")
+
+    # --------------------------------------------------------
+    # DO NOT FALL BACK TO YOLOV8N
+    # --------------------------------------------------------
 
     raise FileNotFoundError(
-        "No model weights found. "
-        "Please place best.pt in the application directory."
+        "Custom pothole model 'best.pt' was not found. "
+        "Please upload best.pt to your GitHub repository."
     )
 
 
@@ -158,23 +159,61 @@ def load_pothole_model():
 
 try:
 
-    model = YOLO("yolov8n.pt")
+    model = load_pothole_model()
+
     st.sidebar.success(
-        "✅ Model Loaded Successfully!"
+        "✅ Custom Pothole Model Loaded"
     )
 
     st.sidebar.write(
-        "**Model Classes:**",
+        "### 🔍 Model Classes"
+    )
+
+    st.sidebar.write(
         model.names
     )
 
 except Exception as e:
 
     st.error(
-        f"❌ Could not load model weights: {e}"
+        f"❌ Could not load custom pothole model: {e}"
+    )
+
+    st.info(
+        "Make sure your trained best.pt file is present "
+        "in the same GitHub folder as app.py."
     )
 
     st.stop()
+
+
+# ============================================================
+# MODEL VALIDATION
+# ============================================================
+
+# Display warning if model doesn't appear to contain pothole
+class_names = list(model.names.values())
+
+pothole_found = any(
+    "pothole" in str(name).lower()
+    for name in class_names
+)
+
+if pothole_found:
+
+    st.sidebar.success(
+        "🕳️ Pothole class detected in model!"
+    )
+
+else:
+
+    st.sidebar.warning(
+        "⚠️ 'pothole' class was not found in model.names."
+    )
+
+    st.sidebar.write(
+        "Your best.pt may not be the trained pothole model."
+    )
 
 
 # ============================================================
@@ -235,7 +274,7 @@ if mode == "Image":
         with col2:
 
             st.subheader(
-                "🔍 High-Accuracy Predictions"
+                "🔍 Pothole Detection"
             )
 
             with st.spinner(
@@ -250,7 +289,7 @@ if mode == "Image":
 
                     iou=iou_threshold,
 
-                    imgsz=1280,
+                    imgsz=640,
 
                     augment=enable_tta,
 
@@ -261,22 +300,78 @@ if mode == "Image":
 
             result = results[0]
 
+            # ------------------------------------------------
+            # DRAW RESULTS
+            # ------------------------------------------------
+
             annotated_image = result.plot()
 
             st.image(
                 annotated_image,
-                caption="Detected Output",
+                caption="Detected Potholes",
                 width="stretch"
             )
 
-            num_detected = len(
-                result.boxes
-            )
+            # ------------------------------------------------
+            # NUMBER OF DETECTIONS
+            # ------------------------------------------------
+
+            if result.boxes is not None:
+
+                num_detected = len(
+                    result.boxes
+                )
+
+            else:
+
+                num_detected = 0
 
             st.metric(
-                "🕳️ Total Potholes Detected",
+                "🕳️ Potholes Detected",
                 num_detected
             )
+
+            # ------------------------------------------------
+            # DETECTION DETAILS
+            # ------------------------------------------------
+
+            if num_detected > 0:
+
+                st.success(
+                    f"Detected {num_detected} pothole(s)."
+                )
+
+                st.subheader(
+                    "Detection Details"
+                )
+
+                for i, box in enumerate(
+                    result.boxes
+                ):
+
+                    class_id = int(
+                        box.cls[0].item()
+                    )
+
+                    confidence = float(
+                        box.conf[0].item()
+                    )
+
+                    class_name = model.names[
+                        class_id
+                    ]
+
+                    st.write(
+                        f"**{i + 1}. {class_name}** "
+                        f"— Confidence: "
+                        f"{confidence:.2%}"
+                    )
+
+            else:
+
+                st.warning(
+                    "No potholes detected."
+                )
 
 
 # ============================================================
@@ -318,9 +413,8 @@ elif mode == "Video":
                     uploaded_video.read()
                 )
 
-                temp_video_path = (
-                    tfile.name
-                )
+                temp_video_path = tfile.name
+
 
             # ------------------------------------------------
             # OPEN VIDEO
@@ -338,6 +432,7 @@ elif mode == "Video":
 
                 st.stop()
 
+
             # ------------------------------------------------
             # VIDEO INFORMATION
             # ------------------------------------------------
@@ -353,7 +448,9 @@ elif mode == "Video":
             )
 
             if original_fps <= 0:
+
                 original_fps = 30.0
+
 
             video_width = int(
                 cap.get(
@@ -367,10 +464,17 @@ elif mode == "Video":
                 )
             )
 
-            video_duration = (
-                total_frames
-                / original_fps
-            )
+            if total_frames > 0:
+
+                video_duration = (
+                    total_frames
+                    / original_fps
+                )
+
+            else:
+
+                video_duration = 0
+
 
             # ------------------------------------------------
             # VIDEO INFORMATION DISPLAY
@@ -400,7 +504,9 @@ elif mode == "Video":
                 total_frames
             )
 
+
             st.divider()
+
 
             # ------------------------------------------------
             # PROCESSING AREA
@@ -411,27 +517,40 @@ elif mode == "Video":
             )
 
             st.write(
-                f"Running inference on: **{DEVICE_NAME}**"
+                f"Running inference on: "
+                f"**{DEVICE_NAME}**"
             )
 
             if DEVICE == "cpu":
 
                 st.caption(
                     "CPU mode detected. "
-                    "Frame skipping and reduced resolution "
-                    "are enabled for better performance."
+                    "Frame skipping and reduced "
+                    "resolution are enabled."
                 )
 
-            # Video display
+
+            # ------------------------------------------------
+            # DISPLAY AREA
+            # ------------------------------------------------
+
             st_frame = st.empty()
 
-            # Progress
+
+            # ------------------------------------------------
+            # PROGRESS BAR
+            # ------------------------------------------------
+
             progress_bar = st.progress(
                 0,
                 text="Starting..."
             )
 
-            # Metrics
+
+            # ------------------------------------------------
+            # METRICS
+            # ------------------------------------------------
+
             metric1, metric2, metric3 = (
                 st.columns(3)
             )
@@ -442,19 +561,12 @@ elif mode == "Video":
 
             speed_metric = metric3.empty()
 
-            # ------------------------------------------------
-            # STOP BUTTON
-            # ------------------------------------------------
-
-            stop_button = st.button(
-                "⛔ Stop Processing"
-            )
 
             # ------------------------------------------------
             # TRACKING VARIABLES
             # ------------------------------------------------
 
-            unique_pothole_ids = set()
+            unique_track_ids = set()
 
             frame_number = 0
 
@@ -462,14 +574,12 @@ elif mode == "Video":
 
             processing_start = time.time()
 
+
             # ------------------------------------------------
             # VIDEO LOOP
             # ------------------------------------------------
 
-            while (
-                cap.isOpened()
-                and not stop_button
-            ):
+            while cap.isOpened():
 
                 ret, frame = cap.read()
 
@@ -477,6 +587,7 @@ elif mode == "Video":
                     break
 
                 frame_number += 1
+
 
                 # --------------------------------------------
                 # FRAME SKIPPING
@@ -487,9 +598,12 @@ elif mode == "Video":
                     % frame_skip
                     != 0
                 ):
+
                     continue
 
+
                 processed_frames += 1
+
 
                 # --------------------------------------------
                 # RESIZE VIDEO
@@ -523,6 +637,7 @@ elif mode == "Video":
                         interpolation=cv2.INTER_AREA
                     )
 
+
                 # --------------------------------------------
                 # YOLO TRACKING
                 # --------------------------------------------
@@ -546,13 +661,16 @@ elif mode == "Video":
                     verbose=False
                 )
 
+
                 result = results[0]
 
+
                 # --------------------------------------------
-                # TRACKING IDS
+                # TRACKING INFORMATION
                 # --------------------------------------------
 
                 frame_potholes = 0
+
 
                 if (
                     result.boxes is not None
@@ -568,21 +686,25 @@ elif mode == "Video":
                         .tolist()
                     )
 
+
                     for track_id in track_ids:
 
-                        unique_pothole_ids.add(
+                        unique_track_ids.add(
                             track_id
                         )
+
 
                     frame_potholes = len(
                         track_ids
                     )
+
 
                 elif result.boxes is not None:
 
                     frame_potholes = len(
                         result.boxes
                     )
+
 
                 # --------------------------------------------
                 # DRAW DETECTIONS
@@ -592,10 +714,16 @@ elif mode == "Video":
                     result.plot()
                 )
 
+
+                # --------------------------------------------
+                # BGR → RGB
+                # --------------------------------------------
+
                 rgb_frame = cv2.cvtColor(
                     annotated_frame,
                     cv2.COLOR_BGR2RGB
                 )
+
 
                 # --------------------------------------------
                 # DISPLAY FRAME
@@ -606,6 +734,7 @@ elif mode == "Video":
                     width="stretch"
                 )
 
+
                 # --------------------------------------------
                 # UPDATE METRICS
                 # --------------------------------------------
@@ -615,12 +744,12 @@ elif mode == "Video":
                     frame_potholes
                 )
 
+
                 total_metric.metric(
-                    "🎯 Unique Potholes Tracked",
-                    len(
-                        unique_pothole_ids
-                    )
+                    "🎯 Unique Track IDs",
+                    len(unique_track_ids)
                 )
+
 
                 # --------------------------------------------
                 # PROCESSING SPEED
@@ -630,6 +759,7 @@ elif mode == "Video":
                     time.time()
                     - processing_start
                 )
+
 
                 if elapsed > 0:
 
@@ -642,25 +772,35 @@ elif mode == "Video":
 
                     processing_fps = 0
 
+
                 speed_metric.metric(
                     "⚡ Processing FPS",
                     f"{processing_fps:.1f}"
                 )
 
+
                 # --------------------------------------------
                 # PROGRESS
                 # --------------------------------------------
 
-                progress = min(
-                    frame_number
-                    / total_frames,
-                    1.0
-                )
+                if total_frames > 0:
+
+                    progress = min(
+                        frame_number
+                        / total_frames,
+                        1.0
+                    )
+
+                else:
+
+                    progress = 0
+
 
                 processed_video_time = (
                     frame_number
                     / original_fps
                 )
+
 
                 progress_bar.progress(
 
@@ -675,30 +815,27 @@ elif mode == "Video":
                     )
                 )
 
+
             # =================================================
             # FINISHED
             # =================================================
 
             cap.release()
 
+
             processing_time = (
                 time.time()
                 - processing_start
             )
 
+
             st.divider()
 
-            if stop_button:
 
-                st.warning(
-                    "⛔ Processing stopped."
-                )
+            st.success(
+                "✅ Video processing completed!"
+            )
 
-            else:
-
-                st.success(
-                    "✅ Video processing completed!"
-                )
 
             # ------------------------------------------------
             # FINAL RESULTS
@@ -708,17 +845,18 @@ elif mode == "Video":
                 st.columns(3)
             )
 
+
             result1.metric(
-                "🕳️ Unique Potholes",
-                len(
-                    unique_pothole_ids
-                )
+                "🕳️ Unique Track IDs",
+                len(unique_track_ids)
             )
+
 
             result2.metric(
                 "⏱️ Processing Time",
                 f"{processing_time:.1f}s"
             )
+
 
             if processing_time > 0:
 
@@ -731,45 +869,52 @@ elif mode == "Video":
 
                 average_fps = 0
 
+
             result3.metric(
                 "⚡ Average FPS",
                 f"{average_fps:.1f}"
             )
 
+
             # ------------------------------------------------
             # SPEED COMPARISON
             # ------------------------------------------------
 
-            if processing_time < video_duration:
+            if video_duration > 0:
 
-                realtime_multiplier = (
-                    video_duration
-                    / processing_time
-                )
+                if processing_time < video_duration:
 
-                st.success(
-                    f"🚀 Processing was "
-                    f"{realtime_multiplier:.2f}× faster "
-                    f"than the original video duration."
-                )
+                    realtime_multiplier = (
+                        video_duration
+                        / processing_time
+                    )
 
-            else:
+                    st.success(
+                        f"🚀 Processing was "
+                        f"{realtime_multiplier:.2f}× "
+                        f"faster than the video duration."
+                    )
 
-                slowdown = (
-                    processing_time
-                    / video_duration
-                )
+                else:
 
-                st.info(
-                    f"Processing took "
-                    f"{slowdown:.2f}× the video duration."
-                )
+                    slowdown = (
+                        processing_time
+                        / video_duration
+                    )
+
+                    st.info(
+                        f"Processing took "
+                        f"{slowdown:.2f}× "
+                        f"the video duration."
+                    )
+
 
         except Exception as e:
 
             st.error(
                 f"❌ Error processing video: {e}"
             )
+
 
         finally:
 
@@ -791,9 +936,5 @@ elif mode == "Video":
                     )
 
                 except Exception:
+
                     pass
-
-
-
-
-
